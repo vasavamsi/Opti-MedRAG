@@ -8,7 +8,7 @@ from tqdm import tqdm
 from termcolor import cprint
 from pptree import print_tree
 from prettytable import PrettyTable
-from MDAgents.utils_og import (
+from MD_Agents.utils_og import (
     Agent, Group, parse_hierarchy, parse_group_info, setup_model,
     load_data, create_question, determine_relevance,
     process_basic_query, determine_difficulty, process_intermediate_query, process_advanced_query, parse_medical_case, form_context_prompt
