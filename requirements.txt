@@ -1,0 +1,15 @@
+openai==1.14.2
+tqdm==4.66.1
+requests==2.31.0
+prettytable==3.9.0
+termcolor==2.4.0
+pptree==3.1
+climage==0.2.0
+faiss-cpu==1.7.4
+python-liquid==1.10.2
+langchain==0.0.345
+transformers==4.44.2
+sentence_transformers==2.2.2
+pyserini==0.22.1
+tiktoken==0.6.0
+datasets==2.16.1
