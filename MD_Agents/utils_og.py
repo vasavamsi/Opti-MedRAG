@@ -5,7 +5,7 @@ from tqdm import tqdm
 from prettytable import PrettyTable 
 from termcolor import cprint
 from pptree import Node
-import google.generativeai as genai
+# import google.generativeai as genai
 from openai import OpenAI
 from pptree import *
 import re
@@ -22,7 +22,7 @@ class Agent:
             self.model = genai.GenerativeModel('gemini-pro')
             self._chat = self.model.start_chat(history=[])
         elif self.model_info in ['gpt-3.5', 'gpt-4', 'gpt-4o', 'gpt-4o-mini']:
-            self.client = OpenAI(api_key=os.environ['openai_api_key'])
+            self.client = OpenAI(api_key='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')
             self.messages = [
                 {"role": "system", "content": instruction},
             ]
@@ -248,52 +248,6 @@ def extract_document_numbers(text):
     document_numbers = [int(num) for num in matches]
     return document_numbers
 
-def determine_relevance(question, textbook, options, difficulty):
-    # return 'intermediate'
-    if difficulty != 'adaptive':
-        return difficulty
-    
-    """The below relevance prompt works for just determining the relevance"""
-    # relevance_prompt = f"""Consider these contexts:\n{textbook}\n\nHere is Question:\n{question}\n\nHere are the Options:\n{options}\n\nTell me the relevance of these Contexts to the Question and if it is sufficient to answer from the given Options. Here are two choices: 1) relevant, 2) irrelevant. Respond with only one choice. No explnation or additional text needed."""
-    relevance_prompt = f"""Consider these contexts:\n{textbook}\n\nHere is Question:\n{question}\n\nHere are the Options:\n{options}\n\nIs the given context relevant to answer the question? Here are two choices: yes, or no. Also if relevant, rank the documents based on there relevance with the question and options. Strict follow the below format:
-    
-    Relevance : [YOUR ANSWER]
-
-    rank 1 : [YOUR ANSWER]
-    rank 2 : [YOUR ANSWER]
-    rank 3 : [YOUR ANSWER]
-
-    No explanation or additional text needed."""
-
-    """The below medical agent works for just determining the relevance"""
-    # medical_agent = Agent(instruction='You are an expert relevance checker with the simple medical background who conducts initial assessment and your job is to decide whether there is a significant relevance between the medical question and context and if the correct option can be identified based on the given context.', role='relevance verifier', model_info='gpt-3.5')
-
-    medical_agent = Agent(instruction='You are an expert relevance checker with the simple medical background who conducts initial assessment and your job is to decide whether there is a significant relevance between the medical question and context and if the correct option can be identified based on the given context. You will also provide the top 3 ranks to the documents based on their importance in finding the correct answer.', role='relevance verifier', model_info='gpt-3.5')
-    # medical_agent.chat('You are a medical expert who conducts initial assessment and your job is to decide the difficulty/complexity of the medical query based on the provided context.')
-    response = medical_agent.chat(relevance_prompt)
-    print('RELEVANCE RESPONSE: \n', response)
-    if 'yes' in response.lower():
-        return 'relevant', extract_document_numbers(response)
-    else:
-        return 'irrelevant', None
-    # # Extract relevance value
-    # relevance_line = [line for line in response.lower().split('\n') if 'relevance :' in line]
-    # print('relevant_line: ', relevance_line)
-    # if relevance_line:
-    #     relevance_value = relevance_line[0].split(':')[1].strip()
-    #     if ' relevant' in relevance_value:
-    #         return 'relevant', extract_document_numbers(response)
-    
-    # return 'irrelevant', None
-    # if 'relevant' in response.lower():
-    #     return 'relevant', extract_document_numbers(response)
-    # else:
-    #     return 'irrelevant', None
-    # elif 'relevant' in response.lower() or '2)' in response.lower():
-    #     return 'relevant'
-    # elif 'irrelevant' in response.lower() or '3)' in response.lower():
-    #     return 'irrelevant'
-
 def determine_difficulty(question, difficulty):
     if difficulty != 'adaptive':
         return difficulty
@@ -319,7 +273,18 @@ def process_intermediate_query(question, options, contexts, examplers, model, ar
     tmp_agent.chat(recruit_prompt)
     
     num_agents = 3  # You can adjust this number as needed
-    recruited = tmp_agent.chat(f"Question: {question}\nOptions: {options}\nYou can recruit {num_agents} experts in different medical expertise. Considering the medical question and the options for the answer, what kind of experts will you recruit to better make an accurate answer?\nAlso, you need to specify the communication structure between experts (e.g., Pulmonologist == Neonatologist == Medical Geneticist == Pediatrician > Cardiologist), or indicate if they are independent.\n\nFor example, if you want to recruit five experts, you answer can be like:\n1. Pediatrician - Specializes in the medical care of infants, children, and adolescents. - Hierarchy: Independent\n2. Cardiologist - Focuses on the diagnosis and treatment of heart and blood vessel-related conditions. - Hierarchy: Pediatrician > Cardiologist\n3. Pulmonologist - Specializes in the diagnosis and treatment of respiratory system disorders. - Hierarchy: Independent\n4. Neonatologist - Focuses on the care of newborn infants, especially those who are born prematurely or have medical issues at birth. - Hierarchy: Independent\n5. Medical Geneticist - Specializes in the study of genes and heredity. - Hierarchy: Independent\n\nPlease answer in above format, and do not include your reason.")
+    recruited = tmp_agent.chat(
+        f"""
+        Question: {question}
+        Options: {options}
+        You can recruit {num_agents} experts in different medical expertise. 
+        Considering the medical question and the options for the answer, what kind of experts will you recruit to better make an accurate answer?
+        Also, you need to specify the communication structure between experts (e.g., Medical Geneticist == Pediatrician > Cardiologist), or indicate if they are independent.
+        For example, you answer can be like:
+        1. Pediatrician - Specializes in the medical care of infants, children, and adolescents. - Hierarchy: Independent
+        2. Cardiologist - Focuses on the diagnosis and treatment of heart and blood vessel-related conditions. - Hierarchy: Pediatrician > Cardiologist
+        3. Pulmonologist - Specializes in the diagnosis and treatment of respiratory system disorders. - Hierarchy: Independent
+        Please answer in above format, and do not include any reason.""")
 
     # recruited = tmp_agent.chat(f"Question: {question} Options: {options}\nYou can recruit {num_agents} experts in different medical expertise. Considering the medical question and the options for the answer, what kind of experts will you recruit to better make an accurate answer?\nAlso, you need to specify the communication structure between experts (e.g., Pulmonologist == Neonatologist == Medical Geneticist == Pediatrician > Cardiologist), or indicate if they are independent.\n\nFor example, if you want to recruit five experts, you answer can be like:\n1. Pediatrician - Specializes in the medical care of infants, children, and adolescents. - Hierarchy: Independent\n2. Cardiologist - Focuses on the diagnosis and treatment of heart and blood vessel-related conditions. - Hierarchy: Pediatrician > Cardiologist\n3. Pulmonologist - Specializes in the diagnosis and treatment of respiratory system disorders. - Hierarchy: Independent\n4. Neonatologist - Focuses on the care of newborn infants, especially those who are born prematurely or have medical issues at birth. - Hierarchy: Independent\n5. Medical Geneticist - Specializes in the study of genes and heredity. - Hierarchy: Independent\n\nStrictly follow the above format in response, and do not include your reason.")
 
@@ -371,14 +336,14 @@ def process_intermediate_query(question, options, contexts, examplers, model, ar
             print(f"Agent {idx+1} ({agent_emoji[idx]}): {agent[0]}")
 
     fewshot_examplers = ""
-    medical_agent = Agent(instruction='You are a helpful medical agent.', role='medical expert', model_info=model)
+    # medical_agent = Agent(instruction='You are a helpful medical agent.', role='medical expert', model_info=model)
     if args.dataset == 'medqa':
         random.shuffle(examplers)
-        for ie, exampler in enumerate(examplers[:5]):
+        for ie, exampler in enumerate(examplers[:2]):
             exampler_question = f"[Example {ie+1}]\n" + exampler['question']
-            options = [f"({k}) {v}" for k, v in exampler['options'].items()]
-            random.shuffle(options)
-            exampler_question += " " + " ".join(options)
+            options_exp = [f"({k}) {v}" for k, v in exampler['options'].items()]
+            random.shuffle(options_exp)
+            exampler_question += " " + " ".join(options_exp)
             exampler_answer = f"Answer: ({exampler['answer_idx']}) {exampler['answer']}"
             exampler_reason = tmp_agent.chat(f"Below is an example of medical knowledge question and answer. After reviewing the below medical question and answering, can you provide 1-2 sentences of reason that support the answer as you didn't know the answer ahead?\n\nQuestion: {exampler_question}\n\nAnswer: {exampler_answer}")
             
@@ -403,7 +368,16 @@ def process_intermediate_query(question, options, contexts, examplers, model, ar
     round_answers = {n: None for n in range(1, num_rounds+1)}
     initial_report = ""
     for k, v in agent_dict.items():
-        opinion = v.chat(f'''Given the examplers and context relevant to the question, please return your answer to the medical query among the option provided.\n\n{fewshot_examplers}\n\nQuestion: {question}\n\nContext: {contexts}\n\nYour answer should be like below format.\n\nAnswer: ''', img_path=None)
+        opinion = v.chat(
+            f'''
+            Given the examplers and context relevant to the question, please return your answer to the medical query among the option provided. It is possible that not all contexts are relevant.
+            Examplers:{fewshot_examplers}
+            Question: {question}
+            Context: {contexts}
+            options: {options}
+            Your answer should be like below format.
+            Answer: B
+            ''', img_path=None)
         initial_report += f"({k.lower()}): {opinion}\n"
         round_opinions[1][k.lower()] = opinion
 
@@ -415,8 +389,6 @@ def process_intermediate_query(question, options, contexts, examplers, model, ar
         agent_rs.chat("You are a medical assistant who excels at summarizing and synthesizing based on multiple experts from various domain experts.")
         
         assessment = "".join(f"({k.lower()}): {v}\n" for k, v in round_opinions[n].items())
-
-        report = agent_rs.chat(f'''Here are some reports from different medical domain experts.\n\n{assessment}\n\nYou need to complete the following steps\n1. Take careful and comprehensive consideration of the following reports.\n2. Extract key knowledge from the following reports.\n3. Derive the comprehensive and summarized analysis based on the knowledge\n4. Your ultimate goal is to derive a refined and synthesized report based on the following reports.\n\nYou should output in exactly the same format as: Key Knowledge:; Total Analysis:''')
         
         for turn_num in range(num_turns):
             turn_name = f"Turn {turn_num + 1}"
@@ -451,50 +423,58 @@ def process_intermediate_query(question, options, contexts, examplers, model, ar
 
         tmp_final_answer = {}
         for i, agent in enumerate(medical_agents):
-            response = agent.chat(f"Now that you've interacted with other medical experts, remind your expertise and the comments from other experts and make your final answer to the given question:\n{question}\nAnswer: ")
+            response = agent.chat(
+                f"Now that you've interacted with other medical experts, remind your expertise and the comments from other experts and make your final answer to the given question:\n{question}, Your answer should be like this format: B")
             tmp_final_answer[agent.role] = response
 
         round_answers[round_name] = tmp_final_answer
         final_answer = tmp_final_answer
 
-    print('\nInteraction Log')        
-    myTable = PrettyTable([''] + [f"Agent {i+1} ({agent_emoji[i]})" for i in range(len(medical_agents))])
+    # print('\nInteraction Log')        
+    # myTable = PrettyTable([''] + [f"Agent {i+1} ({agent_emoji[i]})" for i in range(len(medical_agents))])
 
-    for i in range(1, len(medical_agents)+1):
-        row = [f"Agent {i} ({agent_emoji[i-1]})"]
-        for j in range(1, len(medical_agents)+1):
-            if i == j:
-                row.append('')
-            else:
-                i2j = any(interaction_log[f'Round {k}'][f'Turn {l}'][f'Agent {i}'][f'Agent {j}'] is not None
-                          for k in range(1, len(interaction_log)+1)
-                          for l in range(1, len(interaction_log['Round 1'])+1))
-                j2i = any(interaction_log[f'Round {k}'][f'Turn {l}'][f'Agent {j}'][f'Agent {i}'] is not None
-                          for k in range(1, len(interaction_log)+1)
-                          for l in range(1, len(interaction_log['Round 1'])+1))
+    # for i in range(1, len(medical_agents)+1):
+    #     row = [f"Agent {i} ({agent_emoji[i-1]})"]
+    #     for j in range(1, len(medical_agents)+1):
+    #         if i == j:
+    #             row.append('')
+    #         else:
+    #             i2j = any(interaction_log[f'Round {k}'][f'Turn {l}'][f'Agent {i}'][f'Agent {j}'] is not None
+    #                       for k in range(1, len(interaction_log)+1)
+    #                       for l in range(1, len(interaction_log['Round 1'])+1))
+    #             j2i = any(interaction_log[f'Round {k}'][f'Turn {l}'][f'Agent {j}'][f'Agent {i}'] is not None
+    #                       for k in range(1, len(interaction_log)+1)
+    #                       for l in range(1, len(interaction_log['Round 1'])+1))
                 
-                if not i2j and not j2i:
-                    row.append(' ')
-                elif i2j and not j2i:
-                    row.append(f'\u270B ({i}->{j})')
-                elif j2i and not i2j:
-                    row.append(f'\u270B ({i}<-{j})')
-                elif i2j and j2i:
-                    row.append(f'\u270B ({i}<->{j})')
+    #             if not i2j and not j2i:
+    #                 row.append(' ')
+    #             elif i2j and not j2i:
+    #                 row.append(f'\u270B ({i}->{j})')
+    #             elif j2i and not i2j:
+    #                 row.append(f'\u270B ({i}<-{j})')
+    #             elif i2j and j2i:
+    #                 row.append(f'\u270B ({i}<->{j})')
 
-        myTable.add_row(row)
-        if i != len(medical_agents):
-            myTable.add_row(['' for _ in range(len(medical_agents)+1)])
+    #     myTable.add_row(row)
+    #     if i != len(medical_agents):
+    #         myTable.add_row(['' for _ in range(len(medical_agents)+1)])
     
-    print(myTable)
+    # print(myTable)
 
     cprint("\n[INFO] Step 3. Final Decision", 'yellow', attrs=['blink'])
     
     moderator = Agent("You are a final medical decision maker who reviews all opinions from different medical experts and make final decision.", "Moderator", model_info=model)
     moderator.chat('You are a final medical decision maker who reviews all opinions from different medical experts and make final decision.')
     
-    _decision = moderator.temp_responses(f"Given each agent's final answer, please review each agent's opinion and make the final answer to the question by taking majority vote. Your answer should be like below format:\nAnswer: C) 2th pharyngeal arch\n{final_answer}\n\nQuestion: {question}", img_path=None)
-    final_decision = {'majority': _decision}
+    _decision = moderator.temp_responses(
+        f'''
+        Given each agent's final answer, please review each agent's opinion and make the final answer to the question by taking majority vote. 
+        Final Answer: {final_answer}
+        Question: {question}
+        You must return only the options answer (e.g., A, B or C). Do not include any explanation or additional text.
+        ''', 
+        img_path=None)
+    final_decision =  _decision[0.0]
     emoji_ = '\U0001F468\u200D\u2696\uFE0F'
     print(f"{emoji_} moderator's final decision (by majority vote):", _decision)
     print()
