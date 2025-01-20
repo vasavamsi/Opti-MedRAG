@@ -22,7 +22,7 @@ class Agent:
             self.model = genai.GenerativeModel('gemini-pro')
             self._chat = self.model.start_chat(history=[])
         elif self.model_info in ['gpt-3.5', 'gpt-4', 'gpt-4o', 'gpt-4o-mini']:
-            self.client = OpenAI(api_key='')
+            self.client = OpenAI(api_key=os.environ['openai_api_key'])
             self.messages = [
                 {"role": "system", "content": instruction},
             ]
