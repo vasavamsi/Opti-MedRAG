@@ -22,7 +22,7 @@ class Agent:
             self.model = genai.GenerativeModel('gemini-pro')
             self._chat = self.model.start_chat(history=[])
         elif self.model_info in ['gpt-3.5', 'gpt-4', 'gpt-4o', 'gpt-4o-mini']:
-            self.client = OpenAI(api_key=os.environ['openai_api_key'])
+            self.client = OpenAI(api_key=os.environ.get('OPENAI_API_KEY') or os.environ['openai_api_key'])
             self.messages = [
                 {"role": "system", "content": instruction},
             ]
@@ -209,7 +209,7 @@ def setup_model(model_name):
         genai.configure(api_key=os.environ['genai_api_key'])
         return genai, None
     elif 'gpt' in model_name:
-        client = OpenAI(api_key=os.environ['openai_api_key'])
+        client = OpenAI(api_key=os.environ.get('OPENAI_API_KEY') or os.environ['openai_api_key'])
         return None, client
     else:
         raise ValueError(f"Unsupported model: {model_name}")
@@ -251,24 +251,27 @@ def extract_document_numbers(text):
 def determine_relevance(question, textbook, options, difficulty):
     # return 'intermediate'
     if difficulty != 'adaptive':
-        return difficulty
+        # Manual override: caller forced a difficulty, skip the relevance gate.
+        # Return a tuple so unpacking stays consistent; a non-'relevant' value
+        # routes straight to the multi-agent collaboration path.
+        return difficulty, None
     
     """The below relevance prompt works for just determining the relevance"""
     # relevance_prompt = f"""Consider these contexts:\n{textbook}\n\nHere is Question:\n{question}\n\nHere are the Options:\n{options}\n\nTell me the relevance of these Contexts to the Question and if it is sufficient to answer from the given Options. Here are two choices: 1) relevant, 2) irrelevant. Respond with only one choice. No explnation or additional text needed."""
-    relevance_prompt = f"""Consider these contexts:\n{textbook}\n\nHere is Question:\n{question}\n\nHere are the Options:\n{options}\n\nIs the given context relevant to answer the question? Here are two choices: yes, or no. Also if relevant, rank the documents based on there relevance with the question and options. Strict follow the below format:
-    
-    Relevance : [YOUR ANSWER]
+    relevance_prompt = f"""Consider these contexts:\n{textbook}\n\nHere is Question:\n{question}\n\nHere are the Options:\n{options}\n\nIs the given context relevant and sufficient to answer the question? Here are two choices: yes, or no. Also if relevant, rank the 3 most helpful documents by their document number. Strictly follow the below format:
 
-    rank 1 : [YOUR ANSWER]
-    rank 2 : [YOUR ANSWER]
-    rank 3 : [YOUR ANSWER]
+    Relevance : [yes or no]
+
+    rank 1 : Document [NUMBER]
+    rank 2 : Document [NUMBER]
+    rank 3 : Document [NUMBER]
 
     No explanation or additional text needed."""
 
     """The below medical agent works for just determining the relevance"""
     # medical_agent = Agent(instruction='You are an expert relevance checker with the simple medical background who conducts initial assessment and your job is to decide whether there is a significant relevance between the medical question and context and if the correct option can be identified based on the given context.', role='relevance verifier', model_info='gpt-3.5')
 
-    medical_agent = Agent(instruction='You are an expert relevance checker with the simple medical background who conducts initial assessment and your job is to decide whether there is a significant relevance between the medical question and context and if the correct option can be identified based on the given context. You will also provide the top 3 ranks to the documents based on their importance in finding the correct answer.', role='relevance verifier', model_info='gpt-3.5')
+    medical_agent = Agent(instruction='You are an expert relevance checker with the simple medical background who conducts initial assessment and your job is to decide whether there is a significant relevance between the medical question and context and if the correct option can be identified based on the given context. You will also provide the top 3 ranks to the documents based on their importance in finding the correct answer.', role='relevance verifier', model_info='gpt-4o-mini')
     # medical_agent.chat('You are a medical expert who conducts initial assessment and your job is to decide the difficulty/complexity of the medical query based on the provided context.')
     response = medical_agent.chat(relevance_prompt)
     print('RELEVANCE RESPONSE: \n', response)
@@ -300,7 +303,7 @@ def determine_difficulty(question, difficulty):
     
     difficulty_prompt = f"""Now, given the medical query as below, you need to decide the difficulty/complexity of it:\n{question}.\n\nPlease indicate the difficulty/complexity of the medical query among below options:\n1) intermediate: number of medical experts with different expertise should dicuss and make final decision.\n2) advanced: multiple teams of clinicians from different departments need to collaborate with each other to make final decision."""
     
-    medical_agent = Agent(instruction='You are a medical expert who conducts initial assessment and your job is to decide the difficulty/complexity of the medical query.', role='medical expert', model_info='gpt-3.5')
+    medical_agent = Agent(instruction='You are a medical expert who conducts initial assessment and your job is to decide the difficulty/complexity of the medical query.', role='medical expert', model_info='gpt-4o-mini')
     medical_agent.chat('You are a medical expert who conducts initial assessment and your job is to decide the difficulty/complexity of the medical query.')
     response = medical_agent.chat(difficulty_prompt)
 
@@ -407,7 +410,9 @@ def process_intermediate_query(question, options, contexts, examplers, model, ar
         initial_report += f"({k.lower()}): {opinion}\n"
         round_opinions[1][k.lower()] = opinion
 
-    final_answer = None
+    # Fall back to the experts' initial opinions so the moderator always has
+    # answers to vote on, even when no one requests further discussion.
+    final_answer = dict(round_opinions[1])
     for n in range(1, num_rounds+1):
         print(f"== Round {n} ==")
         round_name = f"Round {n}"
@@ -500,6 +505,121 @@ def process_intermediate_query(question, options, contexts, examplers, model, ar
     print()
 
     return final_decision
+
+def _build_fewshot(examplers, model, args, k=5):
+    """Build a few-shot exampler string for MedQA (shared by the query paths)."""
+    fewshot = ""
+    if getattr(args, 'dataset', None) == 'medqa' and examplers:
+        shuffled = list(examplers)
+        random.shuffle(shuffled)
+        for ie, exampler in enumerate(shuffled[:k]):
+            ex_q = f"[Example {ie+1}]\n" + exampler['question']
+            ex_opts = [f"({key}) {val}" for key, val in exampler['options'].items()]
+            random.shuffle(ex_opts)
+            ex_q += " " + " ".join(ex_opts)
+            ex_q += f"\nAnswer: ({exampler['answer_idx']}) {exampler['answer']}\n\n"
+            fewshot += ex_q
+    return fewshot
+
+def process_basic_query(question, options, context, examplers, model, args):
+    """Basic path: retrieval was judged sufficient, so a single medical expert
+    answers directly from the (top-ranked) retrieved context. Cheapest path."""
+    cprint("[INFO] Basic path: retrieval sufficient -> single-expert RAG answer", 'yellow', attrs=['blink'])
+
+    fewshot_examplers = _build_fewshot(examplers, model, args)
+
+    medical_agent = Agent(
+        instruction=('You are a knowledgeable medical expert. You answer multiple-choice medical '
+                     'questions using the reference context retrieved from medical textbooks. '
+                     'Reason step by step, then commit to the single best option.'),
+        role='medical expert',
+        model_info=model,
+    )
+
+    prompt = (
+        f"Reference context (retrieved from medical textbooks):\n{context}\n\n"
+        f"{fewshot_examplers}"
+        f"Using the reference context above, answer the following question. Briefly justify your "
+        f"choice, then end with a line in the exact format 'Answer: (X) option'.\n\n"
+        f"Question: {question}\n\nOptions: {options}\n\nAnswer: "
+    )
+    response = medical_agent.temp_responses(prompt)
+    final_decision = {'majority': response}
+    print('\U0001F468‍⚕️ basic-path expert answer:', response)
+    return final_decision
+
+def process_advanced_query(question, options, contexts, examplers, model, args):
+    """Advanced path: for the most complex queries, organize multiple
+    multidisciplinary teams (MDTs). Each team deliberates internally, then a
+    chief moderator synthesizes a final decision across teams. Falls back to the
+    intermediate path if team formation fails."""
+    cprint("[INFO] Advanced path: multi-disciplinary team (MDT) collaboration", 'yellow', attrs=['blink'])
+    try:
+        recruit_prompt = ("You are an experienced medical director who organizes multidisciplinary "
+                          "teams (MDTs) to solve a complex medical query.")
+        tmp_agent = Agent(instruction=recruit_prompt, role='director', model_info=model)
+        tmp_agent.chat(recruit_prompt)
+
+        num_teams = 2
+        num_members = 3
+        teams_raw = tmp_agent.chat(
+            f"Question: {question}\nOptions: {options}\n\n"
+            f"Organize {num_teams} multidisciplinary teams to answer this query. For each team, give "
+            f"it a goal and {num_members} members with distinct roles. One member of each team should "
+            f"have 'lead' in their role. Strictly follow this format and add no other text:\n\n"
+            f"Group 1 - <team goal>\n"
+            f"Member 1: Lead <Role> - <one-line expertise>\n"
+            f"Member 2: <Role> - <one-line expertise>\n"
+            f"Member 3: <Role> - <one-line expertise>\n\n"
+            f"Group 2 - <team goal>\n"
+            f"Member 1: Lead <Role> - <one-line expertise>\n"
+            f"Member 2: <Role> - <one-line expertise>\n"
+            f"Member 3: <Role> - <one-line expertise>"
+        )
+
+        group_blocks = [b for b in re.split(r'\n\s*\n', teams_raw.strip())
+                        if b.strip().lower().startswith('group')]
+
+        context_str = "\n".join(contexts) if isinstance(contexts, list) else str(contexts)
+        team_assessments = []
+        for gi, block in enumerate(group_blocks[:num_teams]):
+            parsed = parse_group_info(block)
+            if not parsed['members']:
+                continue
+            group = Group(
+                goal=parsed['group_goal'],
+                members=parsed['members'],
+                question=f"{question}\nOptions: {options}\n\nReference context:\n{context_str}",
+                examplers=None,
+            )
+            assessment = group.interact(comm_type='internal')
+            team_name = parsed['group_goal'].strip() or f"Team {gi+1}"
+            team_assessments.append((team_name, assessment))
+            print(f"  [Team {gi+1}] assessment gathered.")
+
+        if not team_assessments:
+            raise ValueError("no teams could be formed")
+
+        gathered = ""
+        for name, assessment in team_assessments:
+            gathered += f"[{name}]\n{assessment}\n\n"
+
+        moderator = Agent(
+            "You are the chief medical decision maker who reviews the conclusions from multiple "
+            "multidisciplinary teams and makes the final decision by majority reasoning.",
+            "Chief Moderator", model_info=model)
+        moderator.chat("You are the chief medical decision maker who reviews the conclusions from "
+                       "multiple multidisciplinary teams and makes the final decision.")
+        decision = moderator.temp_responses(
+            f"Here are the conclusions from the multidisciplinary teams:\n\n{gathered}"
+            f"Review them and give the single best answer to the question. End with a line in the "
+            f"exact format 'Answer: (X) option'.\n\nQuestion: {question}\nOptions: {options}")
+        final_decision = {'majority': decision}
+        print('\U0001F468‍⚖️ chief moderator final decision:', decision)
+        return final_decision
+    except Exception as e:
+        print(f"[WARN] advanced path failed ({e}); falling back to intermediate path.")
+        return process_intermediate_query(question, options, contexts, examplers, model, args)
 
 def parse_medical_case(text):
     # Split into question and options
